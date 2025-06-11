@@ -19,6 +19,12 @@ if 'language' not in st.session_state:
     st.session_state.language = 'nl'
 if 'description' not in st.session_state:
     st.session_state.description = "Invoice for ice skating activities at DSSV ELS."
+if 'show_download' not in st.session_state:
+    st.session_state.show_download = False
+if 'current_pdf' not in st.session_state:
+    st.session_state.current_pdf = None
+if 'current_filename' not in st.session_state:
+    st.session_state.current_filename = None
 
 # Translations
 translations = {
@@ -254,46 +260,75 @@ if st.session_state.invoice_lines:
         disabled=True
     )
 
+def handle_invoice_generation():
+    if not st.session_state.invoice_lines:
+        st.error("Please add at least one invoice line.")
+        return False
+        
+    safe_customer_name = re.sub(r'[^\w\-_.]', '_', customer_name)
+    pdf_bytes = generate_pdf(customer_name, invoice_name)
+    
+    # Save to file
+    os.makedirs("invoices", exist_ok=True)
+    pdf_filename = f"{st.session_state.invoice_number}_{safe_customer_name}.pdf"
+    pdf_path = os.path.join("invoices", pdf_filename)
+    
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_bytes.getvalue())
+    
+    # Store in session state
+    st.session_state.current_pdf = pdf_bytes
+    st.session_state.current_filename = pdf_filename
+    st.session_state.show_download = True
+    
+    # Save CSV
+    csv_filename = f"{st.session_state.invoice_number}_{safe_customer_name}.csv"
+    csv_path = os.path.join("invoices", csv_filename)
+    df = pd.DataFrame(st.session_state.invoice_lines)
+    df['invoice_number'] = st.session_state.invoice_number
+    df['customer_name'] = customer_name
+    df['date'] = datetime.now().strftime("%Y-%m-%d")
+    df.to_csv(csv_path, index=False)
+    
+    # Update invoice number and save config
+    st.session_state.invoice_number += 1
+    save_config()
+    return True
+
 # Action buttons
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     if st.button("Generate Invoice"):
-        if not customer_name or not st.session_state.invoice_lines:
-            st.error("Please fill in recipient name and add at least one invoice line.")
+        if not customer_name:
+            st.error("Please fill in recipient name.")
         else:
-            # Create sanitized filename
-            safe_customer_name = re.sub(r'[^\w\-_.]', '_', customer_name)
-            pdf_bytes = generate_pdf(customer_name, invoice_name)
-            
-            # Save to file
-            os.makedirs("invoices", exist_ok=True)
-            pdf_filename = f"{st.session_state.invoice_number}_{safe_customer_name}.pdf"
-            pdf_path = os.path.join("invoices", pdf_filename)
-            
-            with open(pdf_path, "wb") as f:
-                f.write(pdf_bytes.getvalue())
-              # Create download link and button
-            b64_pdf = base64.b64encode(pdf_bytes.getvalue()).decode()
-            st.success(f"Invoice saved as {pdf_filename}")
-            st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" download="{pdf_filename}">Download PDF</a>', unsafe_allow_html=True)
-            
-            # Save CSV
-            csv_filename = f"{st.session_state.invoice_number}_{safe_customer_name}.csv"
-            csv_path = os.path.join("invoices", csv_filename)
-            df = pd.DataFrame(st.session_state.invoice_lines)
-            df['invoice_number'] = st.session_state.invoice_number
-            df['customer_name'] = customer_name
-            df['date'] = datetime.now().strftime("%Y-%m-%d")
-            df.to_csv(csv_path, index=False)
-            
-            # Update invoice number and save config
-            st.session_state.invoice_number += 1
-            save_config()
-            
-            # Add continue button
-            if st.button("Continue to next invoice"):
-                clear_invoice_lines()
-                st.rerun()
+            handle_invoice_generation()
+
+# Show download section if PDF is generated
+if st.session_state.show_download and st.session_state.current_pdf is not None:
+    st.success(f"Invoice saved as {st.session_state.current_filename}")
+    b64_pdf = base64.b64encode(st.session_state.current_pdf.getvalue()).decode()
+    st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" download="{st.session_state.current_filename}">Download PDF</a>', unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    .download-button {
+        display: inline-block;
+        padding: 0.5em 1em;
+        color: white;
+        background-color: #0066cc;
+        text-decoration: none;
+        border-radius: 4px;
+        margin: 1em 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    if st.button("Continue to next invoice"):
+        st.session_state.show_download = False
+        st.session_state.current_pdf = None
+        st.session_state.current_filename = None
+        clear_invoice_lines()
+        st.rerun()
 
 with col2:
     if st.button("Generate Test PDF"):
